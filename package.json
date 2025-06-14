@@ -1,0 +1,18 @@
+{
+  "name": "cabchat",
+  "version": "1.0.0",
+  "description": "Real-time AI taxi simulation with Inworld NPCs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "@inworld/framework-nodejs": "file:Inworld Node.js Framework 0.3.1.tgz",
+    "express": "^4.18.2",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}

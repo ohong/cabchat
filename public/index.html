@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CabChat - Voice Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .controls {
+            margin: 20px 0;
+            text-align: center;
+        }
+        button {
+            padding: 12px 24px;
+            margin: 0 10px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .start-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        .stop-btn {
+            background-color: #f44336;
+            color: white;
+        }
+        .transcript {
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            min-height: 300px;
+            margin: 20px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+        }
+        .status {
+            text-align: center;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .connected { color: #4CAF50; }
+        .disconnected { color: #f44336; }
+        .user-text { color: #0066cc; }
+        .ai-text { color: #cc6600; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CabChat Voice Test</h1>
+        <p>Testing conversation with Stacy Chen, the VC from Seattle</p>
+        
+        <div class="status" id="status">Disconnected</div>
+        
+        <div class="controls">
+            <button class="start-btn" id="startBtn" onclick="startConversation()">Start Conversation</button>
+            <button class="stop-btn" id="stopBtn" onclick="stopConversation()" disabled>End Conversation</button>
+        </div>
+        
+        <div class="transcript" id="transcript">Conversation transcript will appear here...</div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+
+        function updateStatus(message, isConnected) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+        }
+
+        function addToTranscript(text, isUser = false) {
+            const transcript = document.getElementById('transcript');
+            const timestamp = new Date().toLocaleTimeString();
+            const prefix = isUser ? '[YOU]' : '[STACY]';
+            const className = isUser ? 'user-text' : 'ai-text';
+            
+            if (transcript.textContent === 'Conversation transcript will appear here...') {
+                transcript.innerHTML = '';
+            }
+            
+            transcript.innerHTML += `<span class="${className}">[${timestamp}] ${prefix}: ${text}</span>\n\n`;
+            transcript.scrollTop = transcript.scrollHeight;
+        }
+
+        function startConversation() {
+            ws = new WebSocket('ws://localhost:3000');
+            
+            ws.onopen = function() {
+                isConnected = true;
+                updateStatus('Connected - Ready to chat with Stacy', true);
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+                // Send start message
+                ws.send(JSON.stringify({ type: 'start' }));
+            };
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'transcript') {
+                    addToTranscript(data.text, data.isUser);
+                } else if (data.type === 'status') {
+                    updateStatus(data.message, true);
+                }
+            };
+            
+            ws.onclose = function() {
+                isConnected = false;
+                updateStatus('Disconnected', false);
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection error', false);
+            };
+        }
+
+        function stopConversation() {
+            if (ws) {
+                ws.send(JSON.stringify({ type: 'stop' }));
+                ws.close();
+            }
+        }
+
+        // Initial status
+        updateStatus('Click "Start Conversation" to begin', false);
+    </script>
+</body>
+</html>
