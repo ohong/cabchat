@@ -3,7 +3,12 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(npm install:*)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(find:*)",
+      "Bash(tar:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(node:*)"
     ],
     "deny": []
   }
