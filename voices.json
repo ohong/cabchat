@@ -1,0 +1,170 @@
+{
+  "voices": [
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Emma",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Dylan",
+      "voiceMetadata": {
+        "gender": "MALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Olivia",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Agnes",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "SENIOR",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Alex",
+      "voiceMetadata": {
+        "gender": "MALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Shaun",
+      "voiceMetadata": {
+        "gender": "MALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Julia",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Ashley",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Cody",
+      "voiceMetadata": {
+        "gender": "MALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Emily",
+      "voiceMetadata": {
+        "gender": "FEMALE",
+        "age": "TEEN",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    },
+    // ... voices truncated for brevity ...
+    {
+      "languageCodes": [
+        "en-US",
+        "zh-CN",
+        "ja-JP",
+        "ko-KR"
+      ],
+      "name": "Riyadh",
+      "voiceMetadata": {
+        "gender": "MALE",
+        "age": "ADULT",
+        "accent": "ACCENT_UNSPECIFIED"
+      },
+      "naturalSampleRateHertz": 24000
+    }
+  ]
+}        
