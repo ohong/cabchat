@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CabChat - Voice Test</title>
+    <title>CabChat - AI Conversation</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -55,20 +55,77 @@
         }
         .connected { color: #4CAF50; }
         .disconnected { color: #f44336; }
-        .user-text { color: #0066cc; }
-        .ai-text { color: #cc6600; }
+        .user-text { color: #0066cc; font-weight: bold; }
+        .ai-text { color: #cc6600; font-weight: bold; }
+        .audio-controls {
+            text-align: center;
+            margin: 10px 0;
+        }
+        .volume-control {
+            margin: 0 10px;
+        }
+        .chat-input-container {
+            display: flex;
+            gap: 10px;
+            margin: 20px 0;
+            align-items: stretch;
+        }
+        .chat-input {
+            flex: 1;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            font-family: inherit;
+        }
+        .chat-input:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        .chat-input:disabled {
+            background-color: #f5f5f5;
+            color: #999;
+        }
+        .send-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            min-width: 80px;
+        }
+        .send-btn:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+        .send-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>CabChat Voice Test</h1>
-        <p>Testing conversation with Stacy Chen, the VC from Seattle</p>
+        <h1>CabChat - AI Conversation</h1>
+        <p>Chat with Stacy Chen, a VC from Seattle heading to Inworld</p>
         
         <div class="status" id="status">Disconnected</div>
+        
+        <div class="audio-controls">
+            <label class="volume-control">
+                🔊 Volume: <input type="range" id="volumeSlider" min="0" max="1" step="0.1" value="0.8">
+            </label>
+        </div>
         
         <div class="controls">
             <button class="start-btn" id="startBtn" onclick="startConversation()">Start Conversation</button>
             <button class="stop-btn" id="stopBtn" onclick="stopConversation()" disabled>End Conversation</button>
+        </div>
+        
+        <div class="chat-input-container" id="chatInputContainer" style="display: none;">
+            <input type="text" class="chat-input" id="chatInput" placeholder="Type your message to Stacy..." maxlength="500" disabled>
+            <button class="send-btn" id="sendBtn" onclick="sendTextMessage()" disabled>Send</button>
         </div>
         
         <div class="transcript" id="transcript">Conversation transcript will appear here...</div>
@@ -77,12 +134,55 @@
     <script>
         let ws = null;
         let isConnected = false;
+        let audioContext = null;
+        let currentVolume = 0.8;
 
         function updateStatus(message, isConnected) {
             const status = document.getElementById('status');
             status.textContent = message;
             status.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
         }
+
+        function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        async function playAudio(audioData) {
+            try {
+                console.log('Received audio data, length:', audioData?.length || 'unknown');
+                
+                if (!audioData) {
+                    console.error('No audio data provided');
+                    return;
+                }
+                
+                // Use HTML5 Audio element for WAV playback (simpler and more reliable)
+                const audio = new Audio();
+                audio.volume = currentVolume;
+                audio.src = 'data:audio/wav;base64,' + audioData;
+                
+                audio.onloadeddata = () => {
+                    console.log('Audio loaded, duration:', audio.duration);
+                };
+                
+                audio.onplay = () => {
+                    console.log('Audio playback started');
+                };
+                
+                audio.onerror = (e) => {
+                    console.error('Audio playback error:', e);
+                };
+                
+                await audio.play();
+                console.log('Audio play() called');
+                
+            } catch (error) {
+                console.error('Error playing audio:', error);
+            }
+        }
+
 
         function addToTranscript(text, isUser = false) {
             const transcript = document.getElementById('transcript');
@@ -106,6 +206,7 @@
                 updateStatus('Connected - Ready to chat with Stacy', true);
                 document.getElementById('startBtn').disabled = true;
                 document.getElementById('stopBtn').disabled = false;
+                updateInputControls();
                 
                 // Send start message
                 ws.send(JSON.stringify({ type: 'start' }));
@@ -116,8 +217,13 @@
                 
                 if (data.type === 'transcript') {
                     addToTranscript(data.text, data.isUser);
+                } else if (data.type === 'audio') {
+                    console.log('Received audio message:', data);
+                    playAudio(data.audio);
                 } else if (data.type === 'status') {
                     updateStatus(data.message, true);
+                } else if (data.type === 'error') {
+                    updateStatus('Error: ' + data.message, false);
                 }
             };
             
@@ -126,6 +232,7 @@
                 updateStatus('Disconnected', false);
                 document.getElementById('startBtn').disabled = false;
                 document.getElementById('stopBtn').disabled = true;
+                updateInputControls();
             };
             
             ws.onerror = function(error) {
@@ -140,6 +247,55 @@
                 ws.close();
             }
         }
+
+        
+        function sendTextMessage() {
+            const chatInput = document.getElementById('chatInput');
+            const message = chatInput.value.trim();
+            
+            if (!message || !ws || !isConnected) {
+                return;
+            }
+            
+            // Send message
+            ws.send(JSON.stringify({ 
+                type: 'message', 
+                text: message
+            }));
+            
+            // Clear input
+            chatInput.value = '';
+        }
+        
+        function updateInputControls() {
+            const chatInput = document.getElementById('chatInput');
+            const sendBtn = document.getElementById('sendBtn');
+            const chatContainer = document.getElementById('chatInputContainer');
+            
+            if (isConnected) {
+                chatInput.disabled = false;
+                sendBtn.disabled = false;
+                chatContainer.style.display = 'flex';
+                chatInput.focus();
+            } else {
+                chatInput.disabled = true;
+                sendBtn.disabled = true;
+                chatContainer.style.display = 'none';
+            }
+        }
+        
+        // Initialize volume control
+        document.getElementById('volumeSlider').addEventListener('input', function(e) {
+            currentVolume = parseFloat(e.target.value);
+        });
+        
+        // Initialize chat input enter key handler
+        document.getElementById('chatInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendTextMessage();
+            }
+        });
 
         // Initial status
         updateStatus('Click "Start Conversation" to begin', false);

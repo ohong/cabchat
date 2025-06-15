@@ -3,6 +3,8 @@ const express = require('express');
 const WebSocket = require('ws');
 const path = require('path');
 const { graph, primitives, telemetry } = require('@inworld/framework-nodejs');
+const { v4: uuidv4 } = require('uuid');
+const WavEncoder = require('wav-encoder');
 
 const app = express();
 const port = 3000;
@@ -15,63 +17,82 @@ function parseEnvironmentVariables() {
     if (!process.env.INWORLD_API_KEY) {
         throw new Error('INWORLD_API_KEY env variable is required');
     }
-    if (!process.env.VAD_MODEL_PATH) {
-        throw new Error('VAD_MODEL_PATH env variable is required');
-    }
     
     return {
         apiKey: process.env.INWORLD_API_KEY,
         llmModelName: process.env.LLM_MODEL_NAME || 'meta-llama/Llama-3.1-70b-Instruct',
         llmProvider: process.env.LLM_PROVIDER || 'inworld',
         voiceId: process.env.VOICE_ID || 'Dennis',
-        vadModelPath: process.env.VAD_MODEL_PATH,
-        graphVisualizationEnabled: (process.env.GRAPH_VISUALIZATION_ENABLED || '').toLowerCase().trim() === 'true',
     };
 }
 
-const server = app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-});
-
-// WebSocket server
-const wss = new WebSocket.Server({ server });
-
 // Stacy Chen NPC configuration
 const STACY_CONFIG = {
+    id: uuidv4(),
     name: "Stacy Chen",
     description: "A 34-year-old venture capitalist visiting from Seattle. She's analytical but personable, with a dry sense of humor. Former gaming engineer at Valve who pivoted to investing. Known for her thesis on AI-powered entertainment being the next computing platform.",
     motivation: "Heading to Inworld's offices for a quarterly board meeting. She led their Series B and is their largest outside investor. Today's agenda includes reviewing their new enterprise partnerships and discussing the roadmap for AI NPCs in AAA games. She's energized about the meeting but also mentally preparing tough questions about burn rate and competitive moats.",
 };
 
-let inworldGraph = null;
-let config = null;
+// Text generation configuration
+const TEXT_CONFIG = {
+    maxNewTokens: 200,
+    maxPromptLength: 1000,
+    repetitionPenalty: 1,
+    topP: 0.8,
+    temperature: 0.8,
+    frequencyPenalty: 0,
+    presencePenalty: 0,
+    stopSequences: ['\n\n'],
+};
 
-// Initialize Inworld
-async function initializeInworld() {
-    try {
-        config = parseEnvironmentVariables();
+// Custom node for processing conversation input
+class ConversationNode extends graph.CustomNode {
+    constructor(id, connections) {
+        super(id);
+        this.input = graph.CustomInputDataType.TEXT;
+        this.output = graph.CustomOutputDataType.CHAT_MESSAGES;
+        this.connections = connections;
+    }
+
+    async process(inputs) {
+        const data = JSON.parse(inputs[0]);
+        const connection = this.connections[data.key];
         
-        // Initialize telemetry
-        telemetry.init({
-            appName: 'CabChat',
-            appVersion: '1.0.0',
-            apiKey: config.apiKey,
+        if (!connection) {
+            throw new Error('Connection not found');
+        }
+        
+        // Add user message to conversation history
+        connection.state.messages.push({
+            role: 'user',
+            content: data.text
         });
-
-        console.log('Inworld initialized successfully');
-    } catch (error) {
-        console.error('Failed to initialize Inworld:', error);
-        throw error;
+        
+        // Create system message with character context
+        const systemMessage = {
+            role: 'system',
+            content: `You are ${connection.state.agent.name}. ${connection.state.agent.description}\n\nCurrent situation: ${connection.state.agent.motivation}\n\nRespond as ${connection.state.agent.name} in character. Keep responses conversational and under 100 words.`
+        };
+        
+        // Return chat messages format expected by LLM node
+        const messages = [systemMessage, ...connection.state.messages.slice(-10)];
+        
+        return messages;
     }
 }
 
-// Create simple graph for text conversation
-async function createConversationGraph() {
+
+// Create conversation graph
+async function createConversationGraph(config, connections) {
     const { Graph, NodeFactory } = graph;
     const { SpeechSynthesisConfig } = primitives.tts;
     
     const synthesisConfig = SpeechSynthesisConfig.getDefault();
     
+    // Create nodes
+    const conversationNode = new ConversationNode('ConversationNode', connections).build();
+
     const llmNode = await NodeFactory.createRemoteLLMNode({
         id: 'LLMNode',
         llmConfig: { 
@@ -80,12 +101,14 @@ async function createConversationGraph() {
             apiKey: config.apiKey 
         },
         executionConfig: {
-            textGenerationConfig: {
-                maxTokens: 150,
-                temperature: 0.7,
-            },
+            textGenerationConfig: TEXT_CONFIG,
         },
         stream: true,
+    });
+
+    // Use the framework's TextChunkingNode to properly chunk text for TTS
+    const textChunkingNode = NodeFactory.createTextChunkingNode({
+        id: 'TextChunkingNode',
     });
 
     const ttsNode = await NodeFactory.createRemoteTTSNode({
@@ -100,30 +123,107 @@ async function createConversationGraph() {
         },
     });
 
+    // Build graph with proper text chunking
     const conversationGraph = new Graph('CabChatGraph');
+    conversationGraph.addNode(conversationNode);
     conversationGraph.addNode(llmNode);
+    conversationGraph.addNode(textChunkingNode);
     conversationGraph.addNode(ttsNode);
-    conversationGraph.addEdge(llmNode, ttsNode);
-    conversationGraph.setStartNode(llmNode);
+    conversationGraph.addEdge(conversationNode, llmNode);
+    conversationGraph.addEdge(llmNode, textChunkingNode);
+    conversationGraph.addEdge(textChunkingNode, ttsNode);
+    conversationGraph.setStartNode(conversationNode);
     conversationGraph.setEndNode(ttsNode);
 
-    return conversationGraph;
+    return { graph: conversationGraph, nodes: [conversationNode, llmNode, textChunkingNode, ttsNode] };
 }
+
+class CabChatApp {
+    constructor() {
+        this.config = null;
+        this.connections = {};
+        this.conversationGraph = null;
+    }
+
+    async initialize() {
+        this.config = parseEnvironmentVariables();
+        
+        // Initialize telemetry
+        telemetry.init({
+            appName: 'CabChat',
+            appVersion: '1.0.0',
+            apiKey: this.config.apiKey,
+        });
+
+        // Create the conversation graph
+        this.conversationGraph = await createConversationGraph(this.config, this.connections);
+
+        console.log('CabChat initialized successfully');
+    }
+
+    createSession(key, userName = 'Passenger') {
+        this.connections[key] = {
+            state: {
+                agent: STACY_CONFIG,
+                userName: userName,
+                messages: []
+            },
+            ws: null
+        };
+
+        return this.connections[key];
+    }
+
+    removeSession(key) {
+        if (this.connections[key]) {
+            delete this.connections[key];
+        }
+    }
+
+    async processMessage(key, text) {
+        const input = JSON.stringify({
+            text: text,
+            key: key
+        });
+
+        const executionId = uuidv4();
+        const outputStream = await this.conversationGraph.graph.execute(input, executionId);
+        
+        return { outputStream, executionId };
+    }
+
+    shutdown() {
+        if (this.conversationGraph) {
+            this.conversationGraph.graph.destroy();
+            this.conversationGraph.nodes.forEach(node => node.destroy());
+        }
+        this.connections = {};
+        telemetry.shutdown();
+    }
+}
+
+const server = app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});
+
+// WebSocket server
+const wss = new WebSocket.Server({ server });
+
+const cabChatApp = new CabChatApp();
 
 wss.on('connection', (ws) => {
     console.log('Client connected');
-    let currentGraph = null;
-    let conversationHistory = [];
+    let sessionKey = null;
 
     ws.on('message', async (message) => {
         try {
             const data = JSON.parse(message);
             
             if (data.type === 'start') {
-                await startConversation(ws);
+                await handleStartConversation(ws, data);
             } else if (data.type === 'stop') {
-                await stopConversation();
-            } else if (data.type === 'user_message') {
+                await handleStopConversation();
+            } else if (data.type === 'user_message' || data.type === 'message') {
                 await handleUserMessage(data.text);
             }
         } catch (error) {
@@ -135,33 +235,15 @@ wss.on('connection', (ws) => {
         }
     });
 
-    async function startConversation(ws) {
+    async function handleStartConversation(ws, data) {
         try {
-            if (!config) {
-                throw new Error('Inworld not initialized');
+            if (!cabChatApp.config) {
+                throw new Error('App not initialized');
             }
 
-            ws.send(JSON.stringify({
-                type: 'status',
-                message: 'Connecting to Inworld...'
-            }));
-
-            currentGraph = await createConversationGraph();
-            
-            // Set up graph output listener
-            const outputStream = currentGraph.createOutputStream();
-            outputStream.on('data', (data) => {
-                if (data.type === 'TEXT') {
-                    ws.send(JSON.stringify({
-                        type: 'transcript',
-                        text: data.text,
-                        isUser: false
-                    }));
-                } else if (data.type === 'AUDIO') {
-                    // Handle audio if needed
-                    console.log('Received audio packet');
-                }
-            });
+            sessionKey = uuidv4();
+            const connection = cabChatApp.createSession(sessionKey, data.userName || 'Passenger');
+            connection.ws = ws;
 
             ws.send(JSON.stringify({
                 type: 'status',
@@ -170,19 +252,75 @@ wss.on('connection', (ws) => {
 
             // Send initial greeting
             const greetings = [
-                "Hi there! I'm Stacy. Thanks for picking me up. Have you tried any games with AI NPCs yet?",
-                "Hey! I'm Stacy. This is perfect timing - I'm curious, what do you think about AI changing how we interact with technology?",
-                "Hi! Stacy here. The city's so different from Seattle. Do you prefer the vibe here?",
-                "Hello! I'm Stacy. My job is basically predicting what entertainment looks like in 10 years..."
+                "Hi there! I'm Stacy. Thanks for picking me up - heading to Inworld for a board meeting. What's your take on AI in games?",
+                "Hey! I'm Stacy Chen. Perfect timing for this ride - I'm curious, have you seen how AI is changing entertainment?",
+                "Hi! Stacy here. Coming from Seattle, this city feels so different. You been driving long?",
+                "Hello! I'm Stacy. My job is basically betting on the future of interactive entertainment. What do you think that looks like?"
             ];
             
             const initialGreeting = greetings[Math.floor(Math.random() * greetings.length)];
             
+            // Send greeting to transcript immediately
             ws.send(JSON.stringify({
                 type: 'transcript',
                 text: initialGreeting,
                 isUser: false
             }));
+            
+            // Generate audio for the greeting
+            setTimeout(async () => {
+                try {
+                    // Add greeting to conversation history
+                    cabChatApp.connections[sessionKey].state.messages.push({
+                        role: 'assistant',
+                        content: initialGreeting
+                    });
+                    
+                    // Use TTS directly for the greeting
+                    const { Graph, NodeFactory } = graph;
+                    const { SpeechSynthesisConfig } = primitives.tts;
+                    
+                    const synthesisConfig = SpeechSynthesisConfig.getDefault();
+                    const ttsNode = await NodeFactory.createRemoteTTSNode({
+                        id: 'GreetingTTSNode',
+                        ttsConfig: {
+                            apiKey: cabChatApp.config.apiKey,
+                            synthesisConfig,
+                        },
+                        executionConfig: {
+                            speakerId: cabChatApp.config.voiceId,
+                            synthesisConfig,
+                        },
+                    });
+                    
+                    const greetingGraph = new Graph('GreetingGraph');
+                    greetingGraph.addNode(ttsNode);
+                    greetingGraph.setStartNode(ttsNode);
+                    greetingGraph.setEndNode(ttsNode);
+                    
+                    const outputStream = await greetingGraph.execute(initialGreeting, uuidv4());
+                    const ttsStream = (await outputStream.next()).data;
+                    
+                    if (ttsStream?.next) {
+                        let chunk = await ttsStream.next();
+                        while (!chunk.done) {
+                            if (chunk.audio) {
+                                ws.send(JSON.stringify({
+                                    type: 'audio',
+                                    audio: chunk.audio
+                                }));
+                            }
+                            chunk = await ttsStream.next();
+                        }
+                    }
+                    
+                    greetingGraph.closeExecution(outputStream);
+                    greetingGraph.destroy();
+                    ttsNode.destroy();
+                } catch (error) {
+                    console.error('Error processing initial greeting:', error);
+                }
+            }, 1000);
 
         } catch (error) {
             console.error('Failed to start conversation:', error);
@@ -194,58 +332,142 @@ wss.on('connection', (ws) => {
     }
 
     async function handleUserMessage(text) {
-        if (!currentGraph) {
-            throw new Error('No active conversation');
+        if (!sessionKey || !cabChatApp.connections[sessionKey]) {
+            throw new Error('No active session');
         }
 
-        conversationHistory.push({ role: 'user', content: text });
-        
-        // Create context-aware prompt
-        const systemPrompt = `You are ${STACY_CONFIG.name}. ${STACY_CONFIG.description}
+        try {
+            // Validate input text has English letters/digits for TTS
+            const cleanText = text.trim();
+            if (!cleanText || !/[a-zA-Z0-9]/.test(cleanText)) {
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    message: 'Please enter a message with at least one letter or number.'
+                }));
+                return;
+            }
 
-Current situation: ${STACY_CONFIG.motivation}
+            // Send user message to transcript
+            ws.send(JSON.stringify({
+                type: 'transcript',
+                text: cleanText,
+                isUser: true
+            }));
 
-Personality: Respond as Stacy would - direct but warm, asking probing questions, loves discussing the future of interactive entertainment, can geek out about game design.
+            console.log('Processing user message:', cleanText);
+            
+            const { outputStream, executionId } = await cabChatApp.processMessage(sessionKey, cleanText);
+            console.log('Got output stream from graph');
+            
+            // Handle the TTS output stream
+            const ttsStreamWrapper = await outputStream.next();
+            console.log('TTS stream wrapper:', ttsStreamWrapper);
+            
+            const ttsStream = ttsStreamWrapper.data;
+            
+            if (ttsStream?.next) {
+                let chunk = await ttsStream.next();
+                let fullResponse = '';
+                let sentenceBuffer = '';
 
-Keep responses conversational and under 100 words.
+                while (!chunk.done) {
+                    console.log('Chunk received:', JSON.stringify(chunk)); // Debug logging
+                    
+                    if (chunk.text && typeof chunk.text === 'string') {
+                        const chunkText = chunk.text;
+                        fullResponse += chunkText;
+                        sentenceBuffer += chunkText;
+                        
+                        // Check if we have a complete sentence
+                        if (sentenceBuffer.match(/[.!?]\s*$/) || sentenceBuffer.includes('\n')) {
+                            ws.send(JSON.stringify({
+                                type: 'transcript',
+                                text: sentenceBuffer.trim(),
+                                isUser: false
+                            }));
+                            sentenceBuffer = '';
+                        }
+                    }
+                    
+                    if (chunk.audio) {
+                        console.log('Processing audio chunk, sample rate:', chunk.audio.sampleRate, 'data length:', chunk.audio.data?.length || 'unknown');
+                        
+                        try {
+                            // Convert raw audio data to WAV format
+                            const audioBuffer = await WavEncoder.encode({
+                                sampleRate: chunk.audio.sampleRate || 16000,
+                                channelData: [new Float32Array(chunk.audio.data)],
+                            });
+                            
+                            // Convert to base64 for transmission
+                            const base64Audio = Buffer.from(audioBuffer).toString('base64');
+                            
+                            console.log('Sending WAV audio chunk, base64 length:', base64Audio.length);
+                            ws.send(JSON.stringify({
+                                type: 'audio',
+                                audio: base64Audio
+                            }));
+                        } catch (audioError) {
+                            console.error('Error processing audio:', audioError);
+                        }
+                    }
 
-Conversation so far:
-${conversationHistory.map(msg => `${msg.role === 'user' ? 'Passenger' : 'Stacy'}: ${msg.content}`).join('\n')}
+                    chunk = await ttsStream.next();
+                }
 
-Respond as Stacy:`;
+                // Send any remaining text
+                if (sentenceBuffer.trim()) {
+                    ws.send(JSON.stringify({
+                        type: 'transcript',
+                        text: sentenceBuffer.trim(),
+                        isUser: false
+                    }));
+                }
 
-        // Send to LLM node
-        await currentGraph.run({
-            type: 'TEXT',
-            text: systemPrompt
-        });
+                // Add assistant response to conversation history
+                if (fullResponse.trim()) {
+                    cabChatApp.connections[sessionKey].state.messages.push({
+                        role: 'assistant',
+                        content: fullResponse.trim()
+                    });
+                }
+            } else {
+                console.log('No TTS stream available');
+            }
+            
+            cabChatApp.conversationGraph.graph.closeExecution(outputStream);
+            console.log('Closed execution stream');
+
+        } catch (error) {
+            console.error('Error handling user message:', error);
+            ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Error processing message: ' + error.message
+            }));
+        }
     }
 
-    async function stopConversation() {
-        if (currentGraph) {
-            currentGraph.destroy();
-            currentGraph = null;
-            conversationHistory = [];
+    async function handleStopConversation() {
+        if (sessionKey) {
+            cabChatApp.removeSession(sessionKey);
+            sessionKey = null;
             console.log('Conversation stopped');
         }
     }
 
     ws.on('close', () => {
         console.log('Client disconnected');
-        stopConversation();
+        handleStopConversation();
     });
 });
 
-// Initialize on startup
-initializeInworld().catch(console.error);
+// Initialize the app
+cabChatApp.initialize().catch(console.error);
 
 // Handle graceful shutdown
 function shutdown() {
     console.log('Shutting down gracefully');
-    if (inworldGraph) {
-        inworldGraph.destroy();
-    }
-    telemetry.shutdown();
+    cabChatApp.shutdown();
     server.close(() => {
         process.exit(0);
     });
